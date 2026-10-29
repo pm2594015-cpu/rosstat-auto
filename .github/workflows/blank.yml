@@ -1,0 +1,81 @@
+import requests
+import pandas as pd
+import json
+import io
+
+# Ссылка на страницу Росстата, где лежат файлы
+URL_PAGE = "https://rosstat.gov.ru/statistics/price"
+
+def fetch_and_parse():
+    print("Ищем актуальный файл на сайте Росстата...")
+    # 1. Заходим на страницу и ищем ссылку на Excel
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    page = requests.get(URL_PAGE, headers=headers).text
+    
+    import re
+    # Ищем ссылки на xlsx файлы
+    links = re.findall(r'href="([^"]+\.xlsx)"', page)
+    file_url = None
+    for link in links:
+        if 'potreb' in link.lower() or 'cen' in link.lower():
+            file_url = link if link.startswith('http') else f"https://rosstat.gov.ru{link}"
+            break
+            
+    if not file_url:
+        print("Не нашли ссылку на файл. Используем прямую.")
+        file_url = "https://rosstat.gov.ru/storage/mediabank/ind_potreb_cen.xlsx"
+
+    print(f"Скачиваем: {file_url}")
+    response = requests.get(file_url, headers=headers)
+    
+    # 2. Читаем Excel
+    df = pd.read_excel(io.BytesIO(response.content), header=None)
+    
+    # 3. Ищем товары
+    targets = ["Помидоры", "Огурцы", "Бананы", "Картофель", "Морковь", "Капуста", 
+               "Свекла", "Яблоки", "Бензин", "Говядина", "Свинина", "Куры", 
+               "Окорочка", "Индейка", "Фарш", "Сосиски", "Пельмени", "Сельдь", 
+               "Яйца", "Молоко", "Сметана", "Сыры", "Масло сливочное", 
+               "Хлеб", "Рис", "Вермишель", "Мука", "Сахар", "Масло подсолнечное", 
+               "Маргарин", "Чай", "Печенье", "Мыло", "Зубная паста"]
+    
+    goods = []
+    for index, row in df.iterrows():
+        row_str = str(row.values)
+        for t in targets:
+            if t in row_str:
+                # Ищем последнее число в строке
+                for val in reversed(row.values):
+                    try:
+                        # Очищаем и парсим
+                        clean_val = str(val).replace(',', '.').replace('%', '').strip()
+                        num = float(clean_val)
+                        if not any(g['name'] == t for g in goods):
+                            goods.append({"name": t, "value": num})
+                        break
+                    except ValueError:
+                        continue
+
+    print(f"Найдено товаров: {len(goods)}")
+    
+    # 4. Сохраняем в JSON
+    final_data = {
+        "overallWeekly": 0.08,
+        "overallYearly": 7.11,
+        "goods": goods if goods else [{"name": "Данные не спарсились", "value": 0}],
+        "history": [
+            {"date": "10.08", "value": -0.06}, {"date": "17.08", "value": -0.02},
+            {"date": "24.08", "value": -0.01}, {"date": "31.08", "value": 0.01},
+            {"date": "07.09", "value": 0.05}, {"date": "14.09", "value": 0.02},
+            {"date": "21.09", "value": 0.06}, {"date": "28.09", "value": 0.12},
+            {"date": "05.10", "value": 0.96}, {"date": "12.10", "value": 0.11},
+            {"date": "19.10", "value": 0.05}, {"date": "26.10", "value": 0.08}
+        ]
+    }
+    
+    with open('data.json', 'w', encoding='utf-8') as f:
+        json.dump(final_data, f, ensure_ascii=False, indent=2)
+    print("Сохранено в data.json")
+
+if __name__ == "__main__":
+    fetch_and_parse()
